@@ -1,0 +1,3 @@
+[submodule "ext/raylib-d"]
+	path = ext/raylib-d
+	url = https://github.com/onroundit/raylib-d
