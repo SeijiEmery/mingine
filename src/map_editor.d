@@ -40,7 +40,8 @@ void main() {
     }
 
     fileListView.onMouseOver = delegate(string path, Rectangle selectionRect, ref ToolWindow window) {
-        drawTexturePreview(path, selectionRect);
+        auto drawAt = window.rect; drawAt.x -= 5; drawAt.width += 10;
+        drawTexturePreview(path, drawAt);
     };
     fileListView.onSelected = delegate(string path, Rectangle selectionRect, ref ToolWindow window) {
         writefln("open file %s!", path);
