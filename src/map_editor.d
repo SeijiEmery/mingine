@@ -90,6 +90,13 @@ struct SpriteEditor {
     Texture2D   texture;
     bool        wantsClose = false;
     Camera2D    camera;
+    ToolWindow  toolsWindow;
+
+    Vector2[]   pointSelections;
+
+    size_t      currentFrame = 0;
+    double      nextFrameTime = 0;
+    double      animationFrameRate = 30; // frames / sec
 
     this (string path) {
         this.path = path;
@@ -97,19 +104,96 @@ struct SpriteEditor {
 
         camera.offset = Vector2(texture.width / 2, texture.height / 2);
         camera.zoom   = 4;
+
+        toolsWindow = ToolWindow("tools", Rectangle(10, 220, 300, 100));
     }
 }
 void drawBackground (ref SpriteEditor editor) {
+   
+    auto mouseXY = Vector2(
+            (GetMouseX() - editor.camera.offset.x) / editor.camera.zoom, 
+            (GetMouseY() - editor.camera.offset.y) / editor.camera.zoom,
+        );//.GetWorldToScreen2D(editor.camera);
+    auto cursorRect = Rectangle(mouseXY.x, mouseXY.y, 100, 100);
+
+    if (!_dragTarget && IsMouseButtonPressed(0)) {
+        editor.pointSelections ~= mouseXY;
+    } else if (IsKeyPressed(KeyboardKey.KEY_TAB) && editor.pointSelections.length) {
+        editor.pointSelections = editor.pointSelections[0..$-1];
+    }
+
    // draw image + manipulators
     BeginMode2D(editor.camera);
     
+    DrawRectangleLines(-1, -1, editor.texture.width + 2, editor.texture.height + 2, 
+        Color(100, 110, 110, 150));
     DrawTexture(editor.texture, 0, 0, Colors.WHITE);
-    
+
+    Rectangle getRect (Vector2 p0, Vector2 p1) {
+        if (p1.x < p0.x) swap(p1.x, p0.x);
+        if (p1.y < p0.y) swap(p1.y, p0.y);
+        return Rectangle(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
+    }
+    Rectangle clampToBounds (Rectangle rect, int width, int height) {
+        if (rect.x < 0) rect.x = 0;
+        if (rect.y < 0) rect.y = 0;
+        if (rect.x + rect.width > width) rect.width = width - rect.x;
+        if (rect.y + rect.height > height) rect.height = height - rect.y;
+        return rect;
+    }
+
+    // draw animation frame(s), if present
+    size_t numFrames = editor.pointSelections.length / 2;
+    if (numFrames > 0) {
+        if (numFrames > 1 && GetTime() > editor.nextFrameTime) {
+            editor.nextFrameTime = GetTime() + 1.0 / editor.animationFrameRate;
+            editor.currentFrame += 1;
+        }
+        if (editor.currentFrame >= numFrames) {
+            editor.currentFrame = 0;
+        }
+        auto frame = clampToBounds(getRect(
+                editor.pointSelections[editor.currentFrame * 2], 
+                editor.pointSelections[editor.currentFrame * 2 + 1]),
+            editor.texture.width, editor.texture.height);
+
+        //writefln("Drawing frame %s => %s", editor.currentFrame, frame);
+
+        DrawTextureRec(editor.texture, frame, 
+            Vector2(0, 20),
+            Colors.WHITE);
+    }
+
+    void drawRect(Vector2 p0, Vector2 p1) {        
+        DrawRectangleLinesEx(clampToBounds(getRect(p0, p1), editor.texture.width, editor.texture.height),
+            1, Color(255, 255, 255, 100));
+    }
+
+    size_t i = 0;
+    for (; i + 1 < editor.pointSelections.length; i += 2) {
+        auto p0 = editor.pointSelections[i];
+        auto p1 = editor.pointSelections[i+1];
+        drawRect(p0, p1);
+    }
+    if (i < editor.pointSelections.length) {
+        drawRect(editor.pointSelections[i], mouseXY);
+    }
+
+    //DrawRectangleLinesEx(cursorRect, 1, Colors.WHITE);
+    //writefln("%s", mouseXY);
+
     EndMode2D();
+
+    DrawText("%s, %s".format(cast(int)mouseXY.x, cast(int)mouseXY.y).toStringz,
+        GetMouseX(), GetMouseY() - 20, 12, Colors.WHITE);
 }
 
-// draw foreground, etc
+// update camera + draw foreground editor UI elements...
 void updateAndRedraw (ref SpriteEditor editor) {
+
+    editor.toolsWindow.updateLayoutAndRedraw!((){
+
+    });
 
     // move camera when dragging w/ right / middle mouse button
     auto camDragTarget = cast(Rectangle*)(&editor.camera.offset);
@@ -427,6 +511,8 @@ void updateLayoutAndRedraw (ref FileListViewWindow files) {
         files.paths = files.rootPath.dirEntries(files.extensions, SpanMode.depth)
             .filter!(entry => entry.exists && entry.isFile)
             .map!(entry => entry.name)
+            .array
+            .sort()
             .array;
         writefln("%s file(s): %s", files.paths.length, files.paths);
     
