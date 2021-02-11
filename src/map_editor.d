@@ -11,18 +11,48 @@ import std.array;
 void main() {
     auto assetBrowserWindow = ToolWindow("assets", Rectangle(610, 10, 300, 200));
 
+    Texture2D[string] textureFileCache;
+    Texture2D readTextureCached (string path) {
+        auto ptr = path in textureFileCache;
+        if (ptr) return *ptr;
+        return textureFileCache[path] = LoadTexture(path.toStringz);
+    }
+
     auto fileListView = FileListViewWindow(
         ToolWindow("image files", Rectangle(10, 10, 300, 200)),
         "../assets",
         "*.png");
 
-    InitWindow(1400, 900, "Hello, Raylib-D!");
+
+    void drawTexturePreview (string path, Rectangle neighboringRect) {
+        auto texture = readTextureCached(path);
+        //if (neighboringRect.x - texture.width > 0) {
+        if (neighboringRect.x + neighboringRect.width / 2 > GetScreenWidth() / 2) {
+            // draw on left hand side
+            DrawTexture(texture, cast(int)(neighboringRect.x - texture.width), cast(int)neighboringRect.y, Colors.WHITE);
+        } else {
+            // draw on right hand side
+            DrawTexture(texture, 
+                cast(int)(neighboringRect.x + neighboringRect.width),
+                cast(int)(neighboringRect.y),
+                Colors.WHITE);
+        }
+    }
+
+    fileListView.onMouseOver = delegate(string path, Rectangle selectionRect, ref ToolWindow window) {
+        drawTexturePreview(path, selectionRect);
+    };
+    fileListView.onSelected = delegate(string path, Rectangle selectionRect, ref ToolWindow window) {
+        writefln("open file %s!", path);
+    };
+
+    InitWindow(1400, 900, "sprite asset editor");
     while (!WindowShouldClose())
     {
         setMouseScrollHandledThisFrame(false);
 
         BeginDrawing();
-        ClearBackground(Colors.RAYWHITE);
+        ClearBackground(Colors.BLACK);
 
         //assetBrowserWindow.updateLayoutAndRedraw!((){
         //    DrawText("Hello, World!", 20, 20, 28, Colors.BLACK);
@@ -79,8 +109,8 @@ bool makeMouseDraggable (ref Rectangle dragTarget, int mouseButton = 0) {
 
 bool hasMouseOver (Rectangle rect) {
     int mouseX = GetMouseX(), mouseY = GetMouseY();
-    return mouseX >= rect.x && mouseX <= rect.x + rect.width &&
-        mouseY >= rect.y && mouseY <= rect.y + rect.height;
+    return mouseX >= rect.x && mouseX < rect.x + rect.width &&
+        mouseY >= rect.y && mouseY < rect.y + rect.height;
 }
 struct ToolWindow {
     string      name;
@@ -192,7 +222,7 @@ void updateLayoutAndRedraw (alias drawContents)(ref ToolWindow window) {
         }
     }
 
-    auto backgroundColor = Color(80, 60, 60, 150);
+    auto backgroundColor = Color(100, 90, 100, 150);
     if (mouseOver) {
         backgroundColor.r += 20;
         backgroundColor.b += 20;
@@ -289,6 +319,9 @@ struct FileListViewWindow {
     string      extensions;
     string[]    paths;
     SysTime     timeLastScanned = SysTime.min;
+
+    void delegate(string path, Rectangle selection, ref ToolWindow window) onMouseOver  = null;
+    void delegate(string path, Rectangle selection, ref ToolWindow window) onSelected   = null;
 }
 
 void updateLayoutAndRedraw (ref FileListViewWindow files) {
@@ -319,16 +352,33 @@ void updateLayoutAndRedraw (ref FileListViewWindow files) {
         writefln("set min width = %s, min height = %s", files.window.minWidth, files.window.minHeight);
         files.window.contentRect.width  = minWidth;
         files.window.contentRect.height = max(minHeight, height);
-        files.window.minWidth = minWidth;
+        //files.window.minWidth = minWidth;
     }
+
+    string    selectedFile  = null;
+    string    mouseoverFile = null;
+    Rectangle cursorAtRect;
 
     files.window.updateLayoutAndRedraw!((){
         int x = cast(int)(files.window.contentRect.x - files.window.scrollPos.x);
         int y = cast(int)(files.window.contentRect.y - files.window.scrollPos.y);
 
         foreach (file; files.paths) {
+            auto rect = Rectangle(x, y, files.window.rect.width, 18);
+            if (rect.hasMouseOver) {
+                mouseoverFile = file;
+                cursorAtRect  = rect;
+                if (IsMouseButtonDown(0)) {
+                    if (IsMouseButtonPressed(0)) selectedFile = file;
+                    DrawRectangleRec(rect, Color(150, 225, 150, 100));
+                } else {
+                    DrawRectangleRec(rect, Color(150, 250, 250, 100));
+                }
+            }
             DrawText(file.toStringz, x, y, 16, Colors.BLACK);
             y += 18;
         }
     });
+    if (selectedFile && files.onSelected) files.onSelected(selectedFile, cursorAtRect, files.window);
+    else if (mouseoverFile && files.onMouseOver) files.onMouseOver(mouseoverFile, cursorAtRect, files.window);
 }
