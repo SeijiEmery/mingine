@@ -19,7 +19,7 @@ void main() {
     }
 
     auto fileListView = FileListViewWindow(
-        ToolWindow("image files", Rectangle(10, 10, 300, 200)),
+        ToolWindow("local image files", Rectangle(10, 10, 300, 200)),
         "../assets",
         "*.png");
 
@@ -167,6 +167,10 @@ void updateLayoutAndRedraw (alias drawContents)(ref ToolWindow window) {
     } else if (window.draggable) {
         window.rect.makeMouseDraggable;
     }
+
+    // enforce constraints st. window cannot go fully off screen
+    window.rect.x = clamp(window.rect.x, 20 - window.rect.width, GetScreenWidth() - 20);
+    window.rect.y = clamp(window.rect.y, 20 - window.rect.height, GetScreenHeight() - 20);
 
     // calculate content rect
     window.contentRect.x = window.rect.x + window.contentPad;
