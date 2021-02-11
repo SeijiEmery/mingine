@@ -8,21 +8,19 @@ import std.datetime.systime;
 import std.file;
 import std.array;
 
+Texture2D[string] textureFileCache;
+Texture2D readTextureCached (string path) {
+    auto ptr = path in textureFileCache;
+    if (ptr) return *ptr;
+    return textureFileCache[path] = LoadTexture(path.toStringz);
+}
+
 void main() {
     auto assetBrowserWindow = ToolWindow("assets", Rectangle(610, 10, 300, 200));
-
-    Texture2D[string] textureFileCache;
-    Texture2D readTextureCached (string path) {
-        auto ptr = path in textureFileCache;
-        if (ptr) return *ptr;
-        return textureFileCache[path] = LoadTexture(path.toStringz);
-    }
-
     auto fileListView = FileListViewWindow(
         ToolWindow("local image files", Rectangle(10, 10, 300, 200)),
         "../assets",
         "*.png");
-
 
     void drawTexturePreview (string path, Rectangle neighboringRect) {
         auto texture = readTextureCached(path);
@@ -38,14 +36,21 @@ void main() {
                 Colors.WHITE);
         }
     }
-
     fileListView.onMouseOver = delegate(string path, Rectangle selectionRect, ref ToolWindow window) {
         auto drawAt = window.rect; drawAt.x -= 5; drawAt.width += 10;
         drawTexturePreview(path, drawAt);
     };
-    fileListView.onSelected = delegate(string path, Rectangle selectionRect, ref ToolWindow window) {
-        writefln("open file %s!", path);
-    };
+
+    SpriteEditor[string] openSpriteEditors;
+    string               activeSpriteEditor = null;
+
+    void openSpriteEditor (string path) {
+        if (path !in openSpriteEditors) {
+            openSpriteEditors[path] = SpriteEditor(path);
+        }
+        activeSpriteEditor = path;
+    }
+    fileListView.onSelected = delegate(string path, Rectangle selectionRect, ref ToolWindow window) { openSpriteEditor(path); };
 
     InitWindow(1400, 900, "sprite asset editor");
     while (!WindowShouldClose())
@@ -55,16 +60,98 @@ void main() {
         BeginDrawing();
         ClearBackground(Colors.BLACK);
 
+        SpriteEditor* spriteEditor = activeSpriteEditor ?
+            activeSpriteEditor in openSpriteEditors :
+            null;
+
+        // draw background 1st so doesn't overlap tool windows / etc
+        if (spriteEditor) drawBackground(*spriteEditor);
+
         //assetBrowserWindow.updateLayoutAndRedraw!((){
         //    DrawText("Hello, World!", 20, 20, 28, Colors.BLACK);
         //});
-
         fileListView.updateLayoutAndRedraw();
+
+        if (spriteEditor) {
+            updateAndRedraw(*spriteEditor);
+            if (spriteEditor.wantsClose) {
+                openSpriteEditors.remove(activeSpriteEditor);
+                activeSpriteEditor = null;
+            }
+        }
 
         EndDrawing();
     }
     CloseWindow();
 }
+
+struct SpriteEditor {
+    string      path;
+    Texture2D   texture;
+    bool        wantsClose = false;
+    Camera2D    camera;
+
+    this (string path) {
+        this.path = path;
+        texture = readTextureCached(path);
+
+        camera.offset = Vector2(texture.width / 2, texture.height / 2);
+        camera.zoom   = 4;
+    }
+}
+void drawBackground (ref SpriteEditor editor) {
+   // draw image + manipulators
+    BeginMode2D(editor.camera);
+    
+    DrawTexture(editor.texture, 0, 0, Colors.WHITE);
+    
+    EndMode2D();
+}
+
+// draw foreground, etc
+void updateAndRedraw (ref SpriteEditor editor) {
+
+    // move camera when dragging w/ right / middle mouse button
+    auto camDragTarget = cast(Rectangle*)(&editor.camera.offset);
+    if (!_dragTarget && (IsMouseButtonPressed(1) || IsMouseButtonPressed(2))) {
+        _dragTarget = camDragTarget;
+        _dragStartPosition.x = GetMouseX() - editor.camera.offset.x;
+        _dragStartPosition.y = GetMouseY() - editor.camera.offset.y;
+    } else if (_dragTarget == camDragTarget) {
+
+        editor.camera.offset.x = GetMouseX() - _dragStartPosition.x;
+        editor.camera.offset.y = GetMouseY() - _dragStartPosition.y;
+
+        if (!IsMouseButtonDown(1) && !IsMouseButtonDown(2)) {
+            _dragTarget = null;
+        }
+    }
+
+    // zoom w/ scroll wheel, or cmd/ctrl +/-/0
+    Vector2 scroll;
+    if (hasUnhandledMouseScrollXY(scroll)) {
+        setMouseScrollHandledThisFrame();
+        editor.camera.zoom -= scroll.y / 10;
+    }
+
+    if (IsKeyPressed(KeyboardKey.KEY_MINUS)) {        // top row '-' key
+        editor.camera.zoom /= 2;
+    } else if (IsKeyPressed(KeyboardKey.KEY_EQUAL)) { // top row '+' key
+        editor.camera.zoom *= 2;
+    } else if (IsKeyPressed(KeyboardKey.KEY_ZERO)) {
+        editor.camera.zoom = 2;
+    }
+
+    editor.camera.zoom = clamp(editor.camera.zoom, 0.5, 10);
+
+    // manipulators
+    BeginMode2D(editor.camera);
+        
+    EndMode2D();
+}
+
+
+
 
 float scrollSensitivity = 2.5;
 bool handledScrollThisFrame = false;
@@ -205,7 +292,7 @@ void updateLayoutAndRedraw (alias drawContents)(ref ToolWindow window) {
         // update scrolling and calculate scrollbar positioning, if present...
         if (window.hasScrollbarX || window.hasScrollbarY) {
             Vector2 scroll;
-            if (hasUnhandledMouseScrollXY(scroll)) {
+            if (mouseOver && hasUnhandledMouseScrollXY(scroll)) {
                 setMouseScrollHandledThisFrame();
 
                 if (window.hasScrollbarX) window.scrollPos.x += scroll.x;
