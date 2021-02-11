@@ -369,7 +369,10 @@ void updateLayoutAndRedraw (ref FileListViewWindow files) {
 
         foreach (file; files.paths) {
             auto rect = Rectangle(x, y, files.window.rect.width, 18);
-            if (rect.hasMouseOver) {
+
+            if (rect.y + rect.height >= files.window.contentRect.y &&
+                rect.y + rect.height / 2 < files.window.rect.y + files.window.rect.height &&
+                rect.hasMouseOver) {
                 mouseoverFile = file;
                 cursorAtRect  = rect;
                 if (IsMouseButtonDown(0)) {
