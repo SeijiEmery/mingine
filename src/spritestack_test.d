@@ -103,7 +103,7 @@ void main() {
     };
 
     voxelAssets.editorUIActions.onMouseover = delegate (string name) {
-        writefln("mouseover! %s", name);
+        //writefln("mouseover! %s", name);
         auto asset = voxelAssets[name];
 
         auto toolWindow  = ToolWindow.getWindow("voxel assets");
@@ -121,9 +121,7 @@ void main() {
         BeginDrawing();
         ClearBackground(Colors.BLACK);
 
-
         knightStack.drawImagePreview(Rectangle(200, 20, 0, 0));
-
 
         spriteStackAssets.drawAssetPickerUI();
         voxelAssets.drawAssetPickerUI();
@@ -142,7 +140,7 @@ struct VoxelAssetCollection {
     VoxelAsset* opIndex (string name) {
         enforce(name in assets,
             format("no asset named '%s'!", name));
-        writefln("get asset %s (%s model(s))", name, assets[name].voxelModels.length);
+        //writefln("get asset %s (%s model(s))", name, assets[name].voxelModels.length);
         return &assets[name];
     }
 
@@ -201,8 +199,8 @@ struct VoxelAssetCollection {
             }
         });
 
-        if (mouseoverAsset) actions.onMouseover(mouseoverAsset);
-        if (clickedAsset) actions.onSelectedAsset(clickedAsset);
+        if (mouseoverAsset && actions.onMouseover) actions.onMouseover(mouseoverAsset);
+        if (clickedAsset && actions.onSelectedAsset) actions.onSelectedAsset(clickedAsset);
     }
 }
 
@@ -254,7 +252,19 @@ SpriteStack createSpriteStackZ (VoxelAsset asset) {
     import std.datetime.systime;
     auto t0 = Clock.currTime;
 
-    auto image = GenImageColor((sliceWidth + 1) * sliceCount, sliceHeight, Color(0, 0, 0, 0));
+    import core.stdc.stdlib: malloc, free;
+    import core.stdc.string: memset;
+
+    size_t imageWidth = (sliceWidth + 1) * sliceCount;
+    size_t imageHeight = sliceHeight;
+    size_t allocSize   = imageWidth * imageHeight * VoxelColor.sizeof;
+
+    // optimization: set voxel pixel values directly into memory;
+    // raylib's pixel drawing capabilities work but are hella slow
+    // (cut a 7 second slice generation for 40k voxels => 16ms)
+    VoxelColor* imageData = cast(VoxelColor*)malloc(allocSize);
+    memset(imageData, 0, allocSize);
+
     foreach (i; 0 .. sliceHeight) {
         int sliceX = i * (sliceWidth + 1);
         int sliceY = 0;
@@ -272,15 +282,25 @@ SpriteStack createSpriteStackZ (VoxelAsset asset) {
                     voxel, palette.length));
 
             auto color = palette[voxel.i];
-            ImageDrawPixel(&image, 
-                sliceX + voxel.x,
-                sliceY + voxel.y,
-                Color(color.r, color.g, color.b, color.a));
+
+            size_t offset = sliceX + voxel.x
+                          + (sliceY + voxel.y) * imageWidth;
+
+            imageData[offset] = color;
         }
     }
     writefln("generated sprite stack slices in %s", Clock.currTime - t0);
+
+    // setup image data structure directly + upload texture via raylib
+    // (for data structure internals, see https://github.com/onroundit/raylib-d/blob/master/source/raylib.d)
+    Image image;
+    image.data = imageData;
+    image.width = cast(int)imageWidth;
+    image.height = cast(int)imageHeight;
+    image.mipmaps = 1;
+    image.format = PixelFormat.UNCOMPRESSED_R8G8B8A8;
     spriteStack.texture = LoadTextureFromImage(image);
-    UnloadImage(image);
+    free(imageData);
     return spriteStack;
 }
 void drawImagePreview (SpriteStack stack, Rectangle rect) {
