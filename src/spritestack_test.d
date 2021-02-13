@@ -5,6 +5,7 @@ import std.path;
 import std.file;
 import std.array;
 import std.string;
+import std.algorithm;
 import raylib;
 
 string toRelPath (string path, string relTo) {
@@ -186,6 +187,19 @@ struct VoxelAsset {
     string name;
     string filePath;
 
+    static struct VoxelDimensions { uint x, y, z; }
+    static struct Voxel           { ubyte r, g, b, a; }
+    static struct VoxelModel {
+        VoxelDimensions dimensions;
+        Voxel[]         vodels;
+    }
+    static struct VoxelColorPalette {
+
+    }
+
+    VoxelModel[] voxelModels;
+    VoxelColorPalette colorPalette;
+
     // magicavoxel .vox reader, from spec https://github.com/ephtracy/voxel-model/blob/master/MagicaVoxel-file-format-vox.txt
     bool tryLoadAsset(string name, string filePath) {
         this.name = name;
@@ -281,6 +295,45 @@ struct VoxelAsset {
         struct PACK { int numModels; }
         struct SIZE { int x, y, z; }
 
+        static VoxelModel readVoxelModel (ref Chunk[] chunks) {
+            auto modelSize = expectChunkStruct!SIZE(chunks);
+
+            enforce(modelSize.x > 0 && modelSize.y > 0 && modelSize.z > 0,
+                format("invalid model size: %s", modelSize));
+
+            auto voxelData = expectChunk(chunks, "XYZI");
+            int numVoxels = *(cast(int*)voxelData.data.ptr);
+            enforce(numVoxels * 4 + 4 == voxelData.data.length,
+                format("expected %s * 4 + 4 == %s, got %s != %s",
+                    numVoxels, voxelData.data.length,
+                    numVoxels * 4 + 4, voxelData.data.length));
+
+            auto voxels = (cast(Voxel[])voxelData.data)[1..$];
+            assert(numVoxels == voxels.length,
+                format("%s != %s!", numVoxels, voxels.length));
+
+            return VoxelModel(
+                VoxelDimensions(cast(uint)modelSize.x, cast(uint)modelSize.y, cast(uint)modelSize.z),
+                voxels);
+        }
+
+        static VoxelModel[] readVoxelModels (ref Chunk[] chunks) {
+            VoxelModel[] models;
+            if (hasChunk(chunks, "PACK")) {
+                // read pack of models
+                auto packInfo = expectChunkStruct!PACK(chunks);
+                foreach (i; 0 .. packInfo.numModels) {
+                    models ~= readVoxelModel(chunks);
+                }
+            } else {
+                models ~= readVoxelModel(chunks);
+            }
+            return models;
+        }
+        static VoxelColorPalette readColorPalette (Chunk chunk) {
+            return VoxelColorPalette();
+        }
+
         try {
             auto mainChunk = readChunk(data);
             enforce(mainChunk.type == "MAIN",
@@ -290,65 +343,32 @@ struct VoxelAsset {
                 format("unexpected %s byte(s) after 1st main chunk!",
                     data.length));
 
-            printChunksRecursive(mainChunk);
+            //printChunksRecursive(mainChunk);
 
-            static struct VoxelDimensions { uint x, y, z; }
-            static struct Voxel           { ubyte r, g, b, a; }
-            static struct VoxelModel {
-                VoxelDimensions dimensions;
-                Voxel[]         vodels;
-            }
-            static VoxelModel readVoxelModel (ref Chunk[] chunks) {
-                auto modelSize = expectChunkStruct!SIZE(chunks);
+            auto chunks = mainChunk.childChunks;
+            this.voxelModels = readVoxelModels(chunks);
 
-                enforce(modelSize.x > 0 && modelSize.y > 0 && modelSize.z > 0,
-                    format("invalid model size: %s", modelSize));
-
-                auto voxelData = expectChunk(chunks, "XYZI");
-
-                uint expectedSize = modelSize.x * modelSize.y * modelSize.z * 4;
-                enforce(voxelData.data.length == 4 + expectedSize,
-                    format("expected 'XYZI' data size = (%s * %s * %s * 4 = %s) + 4 = %s, got %s",
-                        modelSize.x, modelSize.y, modelSize.z,
-                        expectedSize,
-                        expectedSize + 4,
-                        voxelData.data.length));
-
-                int numVoxels = *(cast(int*)voxelData.data.ptr);
-                enforce(numVoxels * 4 + 4 == voxelData.data.length,
-                    format("expected %s * 4 + 4 == %s, got %s != %s",
-                        numVoxels, voxelData.data.length,
-                        numVoxels * 4 + 4, voxelData.data.length));
-
-                assert(numVoxels == modelSize.x * modelSize.y * modelSize.z,
-                    format("%s != %s * %s * %s", numVoxels, modelSize.x, modelSize.y, modelSize.z));
-
-                auto voxels = (cast(Voxel[])voxelData.data)[1..$];
-                assert(numVoxels == voxelData.data.length,
-                    format("%s != %s!", numVoxels, voxels.length));
-
-                return VoxelModel(
-                    VoxelDimensions(cast(uint)modelSize.x, cast(uint)modelSize.y, cast(uint)modelSize.z),
-                    voxels);
-            }
-
-            static VoxelModel[] readVoxelModels (ref Chunk[] chunks) {
-                VoxelModel[] models;
-                if (hasChunk(chunks, "PACK")) {
-                    // read pack of models
-                    auto packInfo = expectChunkStruct!PACK(chunks);
-                    foreach (i; 0 .. packInfo.numModels) {
-                        models ~= readVoxelModel(chunks);
-                    }
-                } else {
-                    models ~= readVoxelModel(chunks);
+            foreach (chunk; chunks) {
+                switch (chunk.type) {
+                    case "RGBA": this.colorPalette = readColorPalette(chunk); break;
+                    case "MATL": break;
+                    case "rOBJ": break;
+                    case "rCAM": break; // 117 bytes
+                    case "nTRN": break; // 28 bytes - guess transform?
+                    case "nSHP": break; // 20 bytes
+                    case "nGRP": break; // 16 bytes
+                    case "NOTE": break;
+                    case "LAYR": break; // 26 bytes
+                    default: writefln("unhandled chunk %s (%s byte(s), %s children), data: '%s'",
+                        chunk.type, chunk.data.length, chunk.childChunks.length, chunk.data);
                 }
-                return models;
             }
 
-            auto chunks      = mainChunk.childChunks;
-            auto voxelModels = readVoxelModels(chunks);
-            
+            // TODO: validate color palette?
+
+            writefln("read %s voxel model(s) with dimension(s) %s",
+                voxelModels.length,
+                voxelModels.map!(model => model.dimensions).array);
 
         } catch (Exception e) {
             writefln("%s", e);
