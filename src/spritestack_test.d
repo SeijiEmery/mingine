@@ -105,7 +105,10 @@ void main() {
     voxelAssets.editorUIActions.onMouseover = delegate (string name) {
         writefln("mouseover! %s", name);
         auto asset = voxelAssets[name];
-        asset.spriteStackZ.drawImagePreview(Rectangle(200, 200, 400, 400));
+
+        auto toolWindow  = ToolWindow.getWindow("voxel assets");
+        auto previewRect = Rectangle(toolWindow.rect.x + toolWindow.rect.width, toolWindow.rect.y, 400, 400);
+        asset.spriteStackZ.drawImagePreview(previewRect);
     };
 
 
@@ -117,6 +120,10 @@ void main() {
 
         BeginDrawing();
         ClearBackground(Colors.BLACK);
+
+
+        knightStack.drawImagePreview(Rectangle(200, 20, 0, 0));
+
 
         spriteStackAssets.drawAssetPickerUI();
         voxelAssets.drawAssetPickerUI();
@@ -132,11 +139,11 @@ struct VoxelAssetCollection {
     string spriteAssetExt = ".vox";
     VoxelAsset[string] assets;
 
-    auto opIndex (string name) {
+    VoxelAsset* opIndex (string name) {
         enforce(name in assets,
             format("no asset named '%s'!", name));
         writefln("get asset %s (%s model(s))", name, assets[name].voxelModels.length);
-        return assets[name];
+        return &assets[name];
     }
 
     void rescan () {
@@ -224,7 +231,9 @@ struct SpriteStack {
     Vector3            direction;
 }
 SpriteStack createSpriteStackZ (VoxelAsset asset) {
-    writefln("creating sprite stack in +z direction for %s (%s)", asset.name, asset.filePath);
+    writefln("creating sprite stack in +z direction for %s (%s) with %s voxel(s)", 
+        asset.name, asset.filePath,
+        asset.voxelModels.map!(model => model.voxels.length).reduce!("a+b"));
 
     // TODO: add multi-model support (and transforms, etc...?)
     enforce(asset.voxelModels.length == 1,
@@ -241,6 +250,9 @@ SpriteStack createSpriteStackZ (VoxelAsset asset) {
 
     // naive: just create the direct image / texture size we need (won't be square / optimal)
     auto palette = asset.colorPalette.palette;
+
+    import std.datetime.systime;
+    auto t0 = Clock.currTime;
 
     auto image = GenImageColor((sliceWidth + 1) * sliceCount, sliceHeight, Color(0, 0, 0, 0));
     foreach (i; 0 .. sliceHeight) {
@@ -266,10 +278,8 @@ SpriteStack createSpriteStackZ (VoxelAsset asset) {
                 Color(color.r, color.g, color.b, color.a));
         }
     }
-    writefln("done!");
-
+    writefln("generated sprite stack slices in %s", Clock.currTime - t0);
     spriteStack.texture = LoadTextureFromImage(image);
-    writefln("ok");
     UnloadImage(image);
     return spriteStack;
 }
