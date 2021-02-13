@@ -87,6 +87,8 @@ struct SpriteStackAsset {
 }
 
 void main() {
+    InitWindow(1400, 900, "sprite asset editor");
+
     SpriteStackAssetCollection spriteStackAssets;
     spriteStackAssets.rescan();
 
@@ -100,7 +102,15 @@ void main() {
 
     };
 
-    InitWindow(1400, 900, "sprite asset editor");
+    voxelAssets.editorUIActions.onMouseover = delegate (string name) {
+        writefln("mouseover! %s", name);
+        auto asset = voxelAssets[name];
+        asset.spriteStackZ.drawImagePreview(Rectangle(200, 200, 400, 400));
+    };
+
+
+    auto knightStack = voxelAssets["chr_knight"].spriteStackZ;
+
     while (!WindowShouldClose())
     {
         setMouseScrollHandledThisFrame(false);
@@ -122,6 +132,13 @@ struct VoxelAssetCollection {
     string spriteAssetExt = ".vox";
     VoxelAsset[string] assets;
 
+    auto opIndex (string name) {
+        enforce(name in assets,
+            format("no asset named '%s'!", name));
+        writefln("get asset %s (%s model(s))", name, assets[name].voxelModels.length);
+        return assets[name];
+    }
+
     void rescan () {
         assets.clear();
         foreach (file; assetRootPath.dirEntries(SpanMode.depth)) {
@@ -130,13 +147,12 @@ struct VoxelAssetCollection {
             string name = file.name[0..$-spriteAssetExt.length].toRelPath(assetRootPath);            
             VoxelAsset asset;
             if (asset.tryLoadAsset(name, file)) {
-                writefln("found asset '%s'", name);
+                writefln("found asset '%s' (%s model(s))", name, asset.voxelModels.length);
                 assets[asset.name] = asset;
             } else {
                 writefln("\033[31merror reading asset '\033[0;1m%s\033[0;31m' at '%s'\033[0m",
                     name, file);
             }
-            assets[name] = VoxelAsset(name, file);
         }
         writefln("found %s asset(s)", assets.length);
     }
@@ -177,6 +193,9 @@ struct VoxelAssetCollection {
                     16, color);
             }
         });
+
+        if (mouseoverAsset) actions.onMouseover(mouseoverAsset);
+        if (clickedAsset) actions.onSelectedAsset(clickedAsset);
     }
 }
 
@@ -188,8 +207,74 @@ struct VoxelAsset {
     string name;
     string filePath;
 
-    VoxelModel[]       voxelModels;
-    VoxelColorPalette  colorPalette;
+    VoxelModel[]        voxelModels;
+    VoxelColorPalette   colorPalette;
+    SpriteStack[string] spriteStacks;
+
+    @property SpriteStack spriteStackZ () {
+        if ("+z" !in spriteStacks) {
+            spriteStacks["+z"] = createSpriteStackZ(this);
+        }
+        return spriteStacks["+z"];
+    }
+}
+struct SpriteStack {
+    Texture2D          texture;
+    Rectangle[]        rects;
+    Vector3            direction;
+}
+SpriteStack createSpriteStackZ (VoxelAsset asset) {
+    writefln("creating sprite stack in +z direction for %s (%s)", asset.name, asset.filePath);
+
+    // TODO: add multi-model support (and transforms, etc...?)
+    enforce(asset.voxelModels.length == 1,
+        format("for simplicity, assuming only 1 voxel model for now (got %s) in asset %s (%s)",
+            asset.voxelModels.length, asset.name, asset.filePath));
+
+    auto model = asset.voxelModels[0];
+    uint sliceWidth = model.dimensions.x, sliceHeight = model.dimensions.y, sliceCount = model.dimensions.z;
+    writefln("need %s texture(s) at %s x %s",
+        sliceCount, sliceWidth, sliceHeight);
+
+    SpriteStack spriteStack;
+    spriteStack.direction = Vector3(0, 0, +1);
+
+    // naive: just create the direct image / texture size we need (won't be square / optimal)
+    auto palette = asset.colorPalette.palette;
+
+    auto image = GenImageColor((sliceWidth + 1) * sliceCount, sliceHeight, Color(0, 0, 0, 0));
+    foreach (i; 0 .. sliceHeight) {
+        int sliceX = i * (sliceWidth + 1);
+        int sliceY = 0;
+
+        auto rect = Rectangle(sliceX, sliceY, sliceWidth, sliceHeight);
+        spriteStack.rects ~= rect;
+
+        foreach (voxel; model.voxels.filter!(voxel => voxel.z == i)) {
+            enforce(voxel.x < sliceWidth && voxel.y < sliceHeight,
+                format("voxel out of range: %s, (%s, %s)",
+                    voxel, sliceWidth, sliceHeight));
+
+            enforce(voxel.i < palette.length,
+                format("voxel palette index out of range! %s, %s",
+                    voxel, palette.length));
+
+            auto color = palette[voxel.i];
+            ImageDrawPixel(&image, 
+                sliceX + voxel.x,
+                sliceY + voxel.y,
+                Color(color.r, color.g, color.b, color.a));
+        }
+    }
+    writefln("done!");
+
+    spriteStack.texture = LoadTextureFromImage(image);
+    writefln("ok");
+    UnloadImage(image);
+    return spriteStack;
+}
+void drawImagePreview (SpriteStack stack, Rectangle rect) {
+    DrawTexture(stack.texture, cast(int)rect.x, cast(int)rect.y, Colors.WHITE);
 }
 
 struct VoxelDimensions { uint x, y, z; }
@@ -197,6 +282,10 @@ struct Voxel           { ubyte x, y, z, i; }
 struct VoxelModel {
     VoxelDimensions dimensions;
     Voxel[]         voxels;
+
+    auto getVoxelSlizeZ (int z) {
+        return voxels.filter!(voxel => voxel.z == z);
+    }
 }
 struct VoxelColorPalette {
     VoxelColor[]    palette;
@@ -399,7 +488,9 @@ bool tryLoadAsset(ref VoxelAsset asset, string name, string filePath) {
             }
         }
 
-        writefln("read %s voxel model(s) with dimension(s) %s, %s color palette with %s colorcolor(s)",
+        writefln("read voxel asset '%s' (%s): %s voxel model(s) with dimension(s) %s, %s color palette with %s color(s)",
+            asset.name,
+            asset.filePath,
             asset.voxelModels.length,
             asset.voxelModels.map!(model => model.dimensions).array,
             hasColorPalette ? "model-defined" : "default",
