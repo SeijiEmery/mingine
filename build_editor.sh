@@ -14,7 +14,7 @@ pushd build >/dev/null
     echo "building..." && \
     dmd -I=libs/raylib/include/ libs/raylib/lib/libdraylib.a -L=-lraylib \
         -of=map_editor \
-        ../src/map_editor.d \
+        ../src/map_editor.d ../src/mingine/editor_ui.d \
     && \
     echo "running..." && \
     ./map_editor

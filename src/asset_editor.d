@@ -8,6 +8,8 @@ import std.datetime.systime;
 import std.file;
 import std.array;
 
+import mingine.editor_ui;
+
 Texture2D[string] textureFileCache;
 Texture2D readTextureCached (string path) {
     auto ptr = path in textureFileCache;
@@ -16,9 +18,11 @@ Texture2D readTextureCached (string path) {
 }
 
 void main() {
-    auto assetBrowserWindow = ToolWindow("assets", Rectangle(610, 10, 300, 200));
+    ToolWindow.createWindow("assets")
+        .setRect(Rectangle(610, 10, 300, 200));
+
     auto fileListView = FileListViewWindow(
-        ToolWindow("local image files", Rectangle(10, 10, 300, 200)),
+        *ToolWindow.createWindow("local image files", Rectangle(10, 10, 300, 200)),
         "../assets",
         "*.png");
 
@@ -90,13 +94,14 @@ struct SpriteEditor {
     Texture2D   texture;
     bool        wantsClose = false;
     Camera2D    camera;
-    ToolWindow  toolsWindow;
 
     Vector2[]   pointSelections;
 
     size_t      currentFrame = 0;
     double      nextFrameTime = 0;
     double      animationFrameRate = 30; // frames / sec
+
+    @property auto toolsWindow () { return ToolWindow.getWindow("tools"); }
 
     this (string path) {
         this.path = path;
@@ -105,7 +110,7 @@ struct SpriteEditor {
         camera.offset = Vector2(texture.width / 2, texture.height / 2);
         camera.zoom   = 4;
 
-        toolsWindow = ToolWindow("tools", Rectangle(10, 220, 300, 100));
+        ToolWindow.createWindow("tools", Rectangle(10, 220, 300, 100));
     }
 }
 void drawBackground (ref SpriteEditor editor) {
@@ -116,7 +121,7 @@ void drawBackground (ref SpriteEditor editor) {
         );//.GetWorldToScreen2D(editor.camera);
     auto cursorRect = Rectangle(mouseXY.x, mouseXY.y, 100, 100);
 
-    if (!_dragTarget && IsMouseButtonPressed(0)) {
+    if (!hasDragAction && IsMouseButtonPressed(0)) {
         editor.pointSelections ~= mouseXY;
     } else if (IsKeyPressed(KeyboardKey.KEY_TAB) && editor.pointSelections.length) {
         editor.pointSelections = editor.pointSelections[0..$-1];
@@ -191,7 +196,7 @@ void drawBackground (ref SpriteEditor editor) {
 // update camera + draw foreground editor UI elements...
 void updateAndRedraw (ref SpriteEditor editor) {
 
-    editor.toolsWindow.updateLayoutAndRedraw!((){
+    editor.toolsWindow.draw((ref layout){
 
     });
 
@@ -234,57 +239,7 @@ void updateAndRedraw (ref SpriteEditor editor) {
     EndMode2D();
 }
 
-
-
-
-float scrollSensitivity = 2.5;
-bool handledScrollThisFrame = false;
-bool hasUnhandledMouseScrollXY (out Vector2 scrollDir) {
-    if (handledScrollThisFrame) return false;
-    if (IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT) || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT)) {
-        scrollDir.x = GetMouseWheelMove() * scrollSensitivity;
-        scrollDir.y = 0;
-    } else {
-        scrollDir.y = -GetMouseWheelMove() * scrollSensitivity;
-        scrollDir.x = 0;
-    }
-    return true;
-}
-void setMouseScrollHandledThisFrame(bool value = true) {
-    handledScrollThisFrame = value;
-}
-
-private Rectangle* _dragTarget = null;
-private Vector2    _dragStartPosition;
-
-// implement drag actions + return true iff dragged / interacted
-// with this frame
-bool makeMouseDraggable (ref Rectangle dragTarget, int mouseButton = 0) {
-    if (!_dragTarget && IsMouseButtonPressed(mouseButton) && hasMouseOver(dragTarget)) {
-        _dragTarget = &dragTarget;
-        _dragStartPosition = Vector2(
-            GetMouseX() - dragTarget.x, 
-            GetMouseY() - dragTarget.y);
-        return true;
-
-    } else if (_dragTarget == &dragTarget) {
-        if (IsMouseButtonDown(mouseButton)) {
-            dragTarget.x = GetMouseX() - _dragStartPosition.x;
-            dragTarget.y = GetMouseY() - _dragStartPosition.y;
-        } else {
-            _dragTarget = null;
-        }
-        return true;
-    }
-    return false;
-}
-
-bool hasMouseOver (Rectangle rect) {
-    int mouseX = GetMouseX(), mouseY = GetMouseY();
-    return mouseX >= rect.x && mouseX < rect.x + rect.width &&
-        mouseY >= rect.y && mouseY < rect.y + rect.height;
-}
-struct ToolWindow {
+struct ToolWindow2 {
     string      name;
     Rectangle   rect;            // outside window rect, incl window title bar
     Rectangle   dragRect;        // internal rect used as a window resizing widget
@@ -309,7 +264,7 @@ struct ToolWindow {
     int minWidth = 100;
     int minHeight = 50;
 }
-void updateLayoutAndRedraw (alias drawContents)(ref ToolWindow window) {
+void updateLayoutAndRedraw (alias drawContents)(ref ToolWindow2 window) {
 
     // apply min width / height constraint
     if (window.rect.width < window.minWidth) window.rect.width = window.minWidth;
@@ -528,8 +483,8 @@ void updateLayoutAndRedraw (ref FileListViewWindow files) {
         minWidth += PAD * 2;
 
         writefln("set min width = %s, min height = %s", files.window.minWidth, files.window.minHeight);
-        files.window.contentRect.width  = minWidth;
-        files.window.contentRect.height = max(minHeight, height);
+        //files.window.contentRect.width  = minWidth;
+        //files.window.contentRect.height = max(minHeight, height);
         //files.window.minWidth = minWidth;
     }
 
@@ -537,15 +492,18 @@ void updateLayoutAndRedraw (ref FileListViewWindow files) {
     string    mouseoverFile = null;
     Rectangle cursorAtRect;
 
-    files.window.updateLayoutAndRedraw!((){
-        int x = cast(int)(files.window.contentRect.x - files.window.scrollPos.x);
-        int y = cast(int)(files.window.contentRect.y - files.window.scrollPos.y);
+    files.window.draw((ref layout){
+        //int x = cast(int)(files.window.contentRect.x - files.window.scrollPos.x);
+        //int y = cast(int)(files.window.contentRect.y - files.window.scrollPos.y);
 
         foreach (file; files.paths) {
-            auto rect = Rectangle(x, y, files.window.rect.width, 18);
+            auto width = MeasureText(file.toStringz, 16);
+            auto rect = layout.layoutRect(width, 18);
+            rect.width = files.window.rect.width;
+            //auto rect = Rectangle(x, y, files.window.rect.width, 18);
 
-            if (rect.y + rect.height >= files.window.contentRect.y &&
-                rect.y + rect.height / 2 < files.window.rect.y + files.window.rect.height &&
+            if (rect.y + rect.height >= layout.parentViewRect.top &&
+                rect.y + rect.height / 2 < layout.parentViewRect.bottom &&
                 rect.hasMouseOver) {
                 mouseoverFile = file;
                 cursorAtRect  = rect;
@@ -556,8 +514,8 @@ void updateLayoutAndRedraw (ref FileListViewWindow files) {
                     DrawRectangleRec(rect, Color(150, 250, 250, 100));
                 }
             }
-            DrawText(file.toStringz, x, y, 16, Colors.BLACK);
-            y += 18;
+            DrawText(file.toStringz, cast(int)rect.x, cast(int)rect.y, 16, Colors.BLACK);
+            //y += 18;
         }
     });
     if (selectedFile && files.onSelected) files.onSelected(selectedFile, cursorAtRect, files.window);
