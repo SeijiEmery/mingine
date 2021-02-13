@@ -186,6 +186,7 @@ struct VoxelAsset {
     string name;
     string filePath;
 
+    // magicavoxel .vox reader, from spec https://github.com/ephtracy/voxel-model/blob/master/MagicaVoxel-file-format-vox.txt
     bool tryLoadAsset(string name, string filePath) {
         this.name = name;
         this.filePath = filePath;
@@ -246,6 +247,39 @@ struct VoxelAsset {
                 printChunksRecursive(childChunk, indentLevel + 1);
             }
         }
+        static bool hasChunk(ref Chunk[] chunks, char[4] chunkType) {
+            return chunks.length && chunks[0].type == chunkType;
+        }
+        static Chunk expectChunk (ref Chunk[] chunks, char[4] chunkType) {
+            enforce(hasChunk(chunks, chunkType),
+                format("expected chunk '%s', but got chunk type '%s'",
+                    chunkType, chunks.length ?
+                        chunks[0].type : "<no chunk>"));
+
+            auto chunk = chunks[0];
+            chunks = chunks[1..$];
+            return chunk;
+        }
+        static T* expectChunkStruct2 (T)(ref Chunk[] chunks, char[4] chunkType, bool shouldHaveNoChildren = true) if (!is(T == class)) {
+            auto chunk = expectChunk(chunks, chunkType);
+            enforce(chunk.data.length == T.sizeof,
+                format("expected %s bytes (%s) in '%s' chunk, got %s '%s'",
+                    chunk.data.length, T.stringof, chunk.type, chunk.data.length, chunk.data));
+            
+            if (shouldHaveNoChildren) {
+                enforce(chunk.childChunks.length == 0,
+                    format("expected chunk '%s' to have no children, but has %s",
+                        chunk.type, chunk.childChunks.length));
+            }
+            return (cast(T*)chunk.data.ptr);
+        }
+        static T* expectChunkStruct(T)(ref Chunk[] chunks, bool shouldHaveNoChildren = true) {
+            return expectChunkStruct2!T(chunks, T.stringof, shouldHaveNoChildren);
+        }
+
+        // chunk types
+        struct PACK { int numModels; }
+        struct SIZE { int x, y, z; }
 
         try {
             auto mainChunk = readChunk(data);
@@ -258,16 +292,68 @@ struct VoxelAsset {
 
             printChunksRecursive(mainChunk);
 
+            static struct VoxelDimensions { uint x, y, z; }
+            static struct Voxel           { ubyte r, g, b, a; }
+            static struct VoxelModel {
+                VoxelDimensions dimensions;
+                Voxel[]         vodels;
+            }
+            static VoxelModel readVoxelModel (ref Chunk[] chunks) {
+                auto modelSize = expectChunkStruct!SIZE(chunks);
+
+                enforce(modelSize.x > 0 && modelSize.y > 0 && modelSize.z > 0,
+                    format("invalid model size: %s", modelSize));
+
+                auto voxelData = expectChunk(chunks, "XYZI");
+
+                uint expectedSize = modelSize.x * modelSize.y * modelSize.z * 4;
+                enforce(voxelData.data.length == 4 + expectedSize,
+                    format("expected 'XYZI' data size = (%s * %s * %s * 4 = %s) + 4 = %s, got %s",
+                        modelSize.x, modelSize.y, modelSize.z,
+                        expectedSize,
+                        expectedSize + 4,
+                        voxelData.data.length));
+
+                int numVoxels = *(cast(int*)voxelData.data.ptr);
+                enforce(numVoxels * 4 + 4 == voxelData.data.length,
+                    format("expected %s * 4 + 4 == %s, got %s != %s",
+                        numVoxels, voxelData.data.length,
+                        numVoxels * 4 + 4, voxelData.data.length));
+
+                assert(numVoxels == modelSize.x * modelSize.y * modelSize.z,
+                    format("%s != %s * %s * %s", numVoxels, modelSize.x, modelSize.y, modelSize.z));
+
+                auto voxels = (cast(Voxel[])voxelData.data)[1..$];
+                assert(numVoxels == voxelData.data.length,
+                    format("%s != %s!", numVoxels, voxels.length));
+
+                return VoxelModel(
+                    VoxelDimensions(cast(uint)modelSize.x, cast(uint)modelSize.y, cast(uint)modelSize.z),
+                    voxels);
+            }
+
+            static VoxelModel[] readVoxelModels (ref Chunk[] chunks) {
+                VoxelModel[] models;
+                if (hasChunk(chunks, "PACK")) {
+                    // read pack of models
+                    auto packInfo = expectChunkStruct!PACK(chunks);
+                    foreach (i; 0 .. packInfo.numModels) {
+                        models ~= readVoxelModel(chunks);
+                    }
+                } else {
+                    models ~= readVoxelModel(chunks);
+                }
+                return models;
+            }
+
+            auto chunks      = mainChunk.childChunks;
+            auto voxelModels = readVoxelModels(chunks);
+            
+
         } catch (Exception e) {
             writefln("%s", e);
             return false;
         }
         return true;
     }
-}
-
-struct VoxFile {
-    string  path;
-    ubyte[] data;
-
 }
