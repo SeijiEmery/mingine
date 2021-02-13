@@ -27,7 +27,8 @@ struct SpriteStackAssetCollection {
                 writefln("found asset '%s'", name);
                 assets[asset.name] = asset;
             } else {
-                writefln("\033[31merror reading asset '\033[0;1m%s\033[0;31m' at '%s'\033[0m");
+                writefln("\033[31merror reading asset '\033[0;1m%s\033[0;31m' at '%s'\033[0m",
+                    name, file);
             }
             assets[name] = SpriteStackAsset(name, file);
         }
@@ -131,7 +132,8 @@ struct VoxelAssetCollection {
                 writefln("found asset '%s'", name);
                 assets[asset.name] = asset;
             } else {
-                writefln("\033[31merror reading asset '\033[0;1m%s\033[0;31m' at '%s'\033[0m");
+                writefln("\033[31merror reading asset '\033[0;1m%s\033[0;31m' at '%s'\033[0m",
+                    name, file);
             }
             assets[name] = VoxelAsset(name, file);
         }
@@ -146,7 +148,7 @@ struct VoxelAssetCollection {
     void drawAssetPickerUI () { drawAssetPickerUI(editorUIActions); }
 
     void drawAssetPickerUI (UIActions actions) {
-        auto window = ToolWindow.createWindow("voxel assets");
+        auto window = ToolWindow.createWindow("voxel assets", Rectangle(20, 240, 200, 200));
 
         string clickedAsset = null;
         string mouseoverAsset = null;
@@ -177,6 +179,9 @@ struct VoxelAssetCollection {
     }
 }
 
+import std.format;
+import std.exception;
+
 struct VoxelAsset {
     string name;
     string filePath;
@@ -184,6 +189,85 @@ struct VoxelAsset {
     bool tryLoadAsset(string name, string filePath) {
         this.name = name;
         this.filePath = filePath;
+
+        // try reading .vox file
+        ubyte[] data = cast(ubyte[])filePath.read();
+        if (data.length < 20 || cast(string)data[0..4] != "VOX ") {
+            writefln("invalid .vox file!");
+            return false;
+        }
+        int versionNum = cast(int*)(data.ptr)[1];
+        writefln("got .vox file w/ version %s", versionNum);
+        if (versionNum != 150 && versionNum != 79) {
+            writefln("invalid version!");
+            return false;
+        }
+        data = data[8..$];
+
+        static struct ChunkHeader {
+            char[4] type;
+            int     numChunkBytes;
+            int     numChildChunkBytes;
+        }
+        static struct Chunk {
+            char[4] type;
+            ubyte[] data;
+            Chunk[] childChunks;
+        }
+        static Chunk readChunk (ref ubyte[] bytes) {
+            enforce(bytes.length >= ChunkHeader.sizeof,
+                format("error: expecting chunk but length %s < %s!", 
+                    bytes.length, ChunkHeader.sizeof));
+            auto header = cast(ChunkHeader*)bytes.ptr;
+            bytes = bytes[12..$];
+            enforce(bytes.length >= header.numChunkBytes + header.numChildChunkBytes,
+                format("chunk mismatch! %s, %s byte(s)", header, bytes.length));
+
+            auto data = bytes[0..header.numChunkBytes]; 
+            bytes     = bytes[header.numChunkBytes..$];
+
+            auto childChunkData = bytes[0..header.numChildChunkBytes]; 
+            bytes               = bytes[header.numChildChunkBytes..$];
+
+            Chunk[] childChunks;
+            while (childChunkData.length) {
+                childChunks ~= readChunk(childChunkData);
+            }
+            return Chunk(header.type, data, childChunks);
+        }
+        static void printChunksRecursive (Chunk chunk, int indentLevel = 0) {
+            foreach (i; 0 .. indentLevel) {
+                write("  ");
+            }
+            writefln("chunk '%s' (data: %s byte(s), %s children)",
+                chunk.type, chunk.data.length, chunk.childChunks.length);
+
+            foreach (childChunk; chunk.childChunks) {
+                printChunksRecursive(childChunk, indentLevel + 1);
+            }
+        }
+
+        try {
+            auto mainChunk = readChunk(data);
+            enforce(mainChunk.type == "MAIN",
+                format("expected 1st chunk type 'MAIN', got %s",
+                    mainChunk.type));
+            enforce(data.length == 0,
+                format("unexpected %s byte(s) after 1st main chunk!",
+                    data.length));
+
+            printChunksRecursive(mainChunk);
+
+        } catch (Exception e) {
+            writefln("%s", e);
+            return false;
+        }
         return true;
     }
+}
+
+struct VoxFile {
+    string  path;
+    ubyte[] data;
+
 }
