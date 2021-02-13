@@ -97,27 +97,41 @@ void main() {
     VoxelAssetCollection voxelAssets;
     voxelAssets.rescan();
 
-    spriteStackAssets.editorUIActions.onSelectedAsset = delegate (string name) {
-        writefln("select asset '%s'", name);
-    };
-    spriteStackAssets.editorUIActions.onMouseover = delegate (string name) {
+    //spriteStackAssets.editorUIActions.onSelectedAsset = delegate (string name) {
+    //    writefln("select asset '%s'", name);
+    //};
+    //spriteStackAssets.editorUIActions.onMouseover = delegate (string name) {};
 
-    };
+    string voxelAssetPreviewMouseover = null;
+    string voxelAssetPreviewName      = null;
 
     voxelAssets.editorUIActions.onMouseover = delegate (string name) {
-        //writefln("mouseover! %s", name);
-        auto asset = voxelAssets[name];
-
-        auto toolWindow  = ToolWindow.getWindow("voxel assets");
-        auto previewRect = Rectangle(toolWindow.rect.x + toolWindow.rect.width, toolWindow.rect.y, 400, 400);
-        asset.spriteStackY.drawImagePreview(previewRect); previewRect.y += 200;
-        asset.spriteStackZ.drawImagePreview(previewRect); previewRect.y += 200;
-
-        previewRect.width = 200;
-        previewRect.height = 200;
-        asset.spriteStackY.drawPreview(previewRect); previewRect.x += 400;
-        asset.spriteStackZ.drawPreview(previewRect);
+        voxelAssetPreviewMouseover = name;
     };
+    voxelAssets.editorUIActions.onSelectedAsset = delegate (string name) {
+        voxelAssetPreviewName = name;
+    };
+
+    void drawVoxelAssetPreview (string name) {
+        if (name !is null) {
+            auto asset = voxelAssets[name];
+            auto toolWindow  = ToolWindow.getWindow("voxel assets");
+            auto previewRect = Rectangle(toolWindow.rect.x + toolWindow.rect.width, toolWindow.rect.y, 400, 400);
+            asset.spriteStackY.drawImagePreview(previewRect); previewRect.y += 200;
+            asset.spriteStackZ.drawImagePreview(previewRect); previewRect.y += 200;
+
+            previewRect.width = 200;
+            previewRect.height = 200;
+            previewRect.x += 200;
+            previewRect.y += 100;
+
+            asset.spriteStackY.drawPreview(previewRect); previewRect.x += 400;
+            asset.spriteStackZ.drawPreview(previewRect);
+        }
+    }
+
+
+
 
     auto knightStack = voxelAssets["chr_knight"].spriteStackZ;
 
@@ -127,15 +141,20 @@ void main() {
     {
         auto t0 = Clock.currTime;
 
+        voxelAssetPreviewMouseover = null;
         setMouseScrollHandledThisFrame(false);
 
         BeginDrawing();
         ClearBackground(Colors.BLACK);
 
-        knightStack.drawImagePreview(Rectangle(200, 20, 0, 0));
+        //knightStack.drawImagePreview(Rectangle(200, 20, 0, 0));
 
-        spriteStackAssets.drawAssetPickerUI();
+        //spriteStackAssets.drawAssetPickerUI();
         voxelAssets.drawAssetPickerUI();
+
+        drawVoxelAssetPreview(voxelAssetPreviewMouseover
+            ? voxelAssetPreviewMouseover
+            : voxelAssetPreviewName);
 
         ToolWindow.createWindow("framerate", Rectangle(20, 800, 200, 50)).draw((ref layout) {
             string frameInfo = format("frame update time: %s ms", frameTime.total!"msecs");
@@ -188,7 +207,7 @@ struct VoxelAssetCollection {
     void drawAssetPickerUI () { drawAssetPickerUI(editorUIActions); }
 
     void drawAssetPickerUI (UIActions actions) {
-        auto window = ToolWindow.createWindow("voxel assets", Rectangle(20, 240, 200, 200));
+        auto window = ToolWindow.createWindow("voxel assets", Rectangle(20, 20, 200, 200));
 
         string clickedAsset = null;
         string mouseoverAsset = null;
