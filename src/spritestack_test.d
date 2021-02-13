@@ -108,9 +108,9 @@ void main() {
 
         auto toolWindow  = ToolWindow.getWindow("voxel assets");
         auto previewRect = Rectangle(toolWindow.rect.x + toolWindow.rect.width, toolWindow.rect.y, 400, 400);
+        asset.spriteStackY.drawImagePreview(previewRect); previewRect.y += 200;
         asset.spriteStackZ.drawImagePreview(previewRect);
     };
-
 
     auto knightStack = voxelAssets["chr_knight"].spriteStackZ;
 
@@ -222,6 +222,12 @@ struct VoxelAsset {
         }
         return spriteStacks["+z"];
     }
+    @property SpriteStack spriteStackY () {
+        if ("+y" !in spriteStacks) {
+            spriteStacks["+y"] = createSpriteStackY(this);
+        }
+        return spriteStacks["+y"];
+    }
 }
 struct SpriteStack {
     Texture2D          texture;
@@ -285,6 +291,81 @@ SpriteStack createSpriteStackZ (VoxelAsset asset) {
 
             size_t offset = sliceX + voxel.x
                           + (sliceY + voxel.y) * imageWidth;
+
+            imageData[offset] = color;
+        }
+    }
+    writefln("generated sprite stack slices in %s", Clock.currTime - t0);
+
+    // setup image data structure directly + upload texture via raylib
+    // (for data structure internals, see https://github.com/onroundit/raylib-d/blob/master/source/raylib.d)
+    Image image;
+    image.data = imageData;
+    image.width = cast(int)imageWidth;
+    image.height = cast(int)imageHeight;
+    image.mipmaps = 1;
+    image.format = PixelFormat.UNCOMPRESSED_R8G8B8A8;
+    spriteStack.texture = LoadTextureFromImage(image);
+    free(imageData);
+    return spriteStack;
+}
+SpriteStack createSpriteStackY (VoxelAsset asset) {
+    writefln("creating sprite stack in +y direction for %s (%s) with %s voxel(s)", 
+        asset.name, asset.filePath,
+        asset.voxelModels.map!(model => model.voxels.length).reduce!("a+b"));
+
+    // TODO: add multi-model support (and transforms, etc...?)
+    enforce(asset.voxelModels.length == 1,
+        format("for simplicity, assuming only 1 voxel model for now (got %s) in asset %s (%s)",
+            asset.voxelModels.length, asset.name, asset.filePath));
+
+    auto model = asset.voxelModels[0];
+    uint sliceWidth = model.dimensions.x, sliceHeight = model.dimensions.z, sliceCount = model.dimensions.y;
+    writefln("need %s texture(s) at %s x %s",
+        sliceCount, sliceWidth, sliceHeight);
+
+    SpriteStack spriteStack;
+    spriteStack.direction = Vector3(0, +1, 0);
+
+    // naive: just create the direct image / texture size we need (won't be square / optimal)
+    auto palette = asset.colorPalette.palette;
+
+    import std.datetime.systime;
+    auto t0 = Clock.currTime;
+
+    import core.stdc.stdlib: malloc, free;
+    import core.stdc.string: memset;
+
+    size_t imageWidth = (sliceWidth + 1) * sliceCount;
+    size_t imageHeight = sliceHeight;
+    size_t allocSize   = imageWidth * imageHeight * VoxelColor.sizeof;
+
+    // optimization: set voxel pixel values directly into memory;
+    // raylib's pixel drawing capabilities work but are hella slow
+    // (cut a 7 second slice generation for 40k voxels => 16ms)
+    VoxelColor* imageData = cast(VoxelColor*)malloc(allocSize);
+    memset(imageData, 0, allocSize);
+
+    foreach (i; 0 .. sliceHeight) {
+        int sliceX = i * (sliceWidth + 1);
+        int sliceY = 0;
+
+        auto rect = Rectangle(sliceX, sliceY, sliceWidth, sliceHeight);
+        spriteStack.rects ~= rect;
+
+        foreach (voxel; model.voxels.filter!(voxel => voxel.y == i)) {
+            enforce(voxel.x < sliceWidth && voxel.z < sliceHeight,
+                format("voxel out of range: %s, (%s, %s)",
+                    voxel, sliceWidth, sliceHeight));
+
+            enforce(voxel.i < palette.length,
+                format("voxel palette index out of range! %s, %s",
+                    voxel, palette.length));
+
+            auto color = palette[voxel.i];
+
+            size_t offset = sliceX + voxel.x
+                          + (sliceY + voxel.z) * imageWidth;
 
             imageData[offset] = color;
         }
