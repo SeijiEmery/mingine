@@ -6,6 +6,8 @@ import std.file;
 import std.array;
 import std.string;
 import std.algorithm;
+import std.datetime.systime;
+import std.datetime;
 import raylib;
 
 string toRelPath (string path, string relTo) {
@@ -109,13 +111,22 @@ void main() {
         auto toolWindow  = ToolWindow.getWindow("voxel assets");
         auto previewRect = Rectangle(toolWindow.rect.x + toolWindow.rect.width, toolWindow.rect.y, 400, 400);
         asset.spriteStackY.drawImagePreview(previewRect); previewRect.y += 200;
-        asset.spriteStackZ.drawImagePreview(previewRect);
+        asset.spriteStackZ.drawImagePreview(previewRect); previewRect.y += 200;
+
+        previewRect.width = 200;
+        previewRect.height = 200;
+        asset.spriteStackY.drawPreview(previewRect); previewRect.x += 400;
+        asset.spriteStackZ.drawPreview(previewRect);
     };
 
     auto knightStack = voxelAssets["chr_knight"].spriteStackZ;
 
+    Duration frameTime;
+
     while (!WindowShouldClose())
     {
+        auto t0 = Clock.currTime;
+
         setMouseScrollHandledThisFrame(false);
 
         BeginDrawing();
@@ -126,7 +137,14 @@ void main() {
         spriteStackAssets.drawAssetPickerUI();
         voxelAssets.drawAssetPickerUI();
 
+        ToolWindow.createWindow("framerate", Rectangle(20, 800, 200, 50)).draw((ref layout) {
+            string frameInfo = format("frame update time: %s ms", frameTime.total!"msecs");
+            auto rect = layout.layoutRect(200, 18);
+            DrawText(frameInfo.toStringz, cast(int)rect.x, cast(int)rect.y, 16, Color(255, 255, 255, 255));
+        });
+
         EndDrawing();
+        frameTime = Clock.currTime - t0;
     }
     CloseWindow();
 }
@@ -386,6 +404,24 @@ SpriteStack createSpriteStackY (VoxelAsset asset) {
 }
 void drawImagePreview (SpriteStack stack, Rectangle rect) {
     DrawTexture(stack.texture, cast(int)rect.x, cast(int)rect.y, Colors.WHITE);
+}
+void drawPreview (SpriteStack stack, Rectangle rect) {
+
+    auto origin = Vector2(rect.x + rect.width / 2f, rect.y + rect.height / 2f);
+    auto position = Vector2(
+        rect.x + rect.width / 2f,
+        rect.y + rect.height / 2f);
+
+    float scale = cast(float)rect.height / stack.texture.height;
+    float rotation = 90 * GetTime();
+    foreach (slice; stack.rects) {
+        DrawTexturePro(stack.texture, slice, rect, 
+            //Vector2(0, 0),
+            Vector2(rect.width / 2f, rect.height / 2f),
+            rotation, Color(255, 255, 255, 255));
+        //position.y += 10;
+        rect.y -= 1 * scale;
+    }
 }
 
 struct VoxelDimensions { uint x, y, z; }
